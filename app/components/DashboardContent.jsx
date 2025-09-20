@@ -1,0 +1,1775 @@
+'use client';
+import React, { useState, useEffect } from 'react';
+import { useUser } from '@clerk/nextjs';
+import { CircleCheck, Clock, ListTodo, TrendingUp, Star, Loader2, AlertCircle, RefreshCw, Target } from 'lucide-react';
+import { format, subDays, isSameDay } from 'date-fns';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { taskApi, generateUserDataFromTasks } from '@/backend/lib/api';
+
+// Helper function to get focus stats from localStorage
+const getFocusStats = () => {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem('focusStats') || '{}');
+  } catch {
+    return {};
+  }
+};
+
+// Helper function to get pomodoro stats from localStorage
+const getPomodoroStats = () => {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(localStorage.getItem('pomodoroStats') || '{}');
+  } catch {
+    return {};
+  }
+};
+
+// Helper function to combine focus and pomodoro stats
+const getCombinedStats = () => {
+  const focusStats = getFocusStats();
+  const pomodoroStats = getPomodoroStats();
+  const combined = {};
+
+  // Get all unique dates
+  const allDates = new Set([
+    ...Object.keys(focusStats),
+    ...Object.keys(pomodoroStats)
+  ]);
+
+  // Combine stats for each date
+  allDates.forEach(date => {
+    const focus = focusStats[date] || { totalFocusTime: 0, sessionsCompleted: 0, tasksWorkedOn: [] };
+    const pomodoro = pomodoroStats[date] || { totalFocusTime: 0, sessionsCompleted: 0, tasksWorkedOn: [] };
+
+    combined[date] = {
+      totalFocusTime: (focus.totalFocusTime || 0) + (pomodoro.totalFocusTime || 0),
+      focusSessions: focus.sessionsCompleted || 0,
+      pomodoroSessions: pomodoro.sessionsCompleted || 0,
+      totalSessions: (focus.sessionsCompleted || 0) + (pomodoro.sessionsCompleted || 0),
+      tasksWorkedOn: [
+        ...(Array.isArray(focus.tasksWorkedOn) ? focus.tasksWorkedOn : []),
+        ...(Array.isArray(pomodoro.tasksWorkedOn) ? pomodoro.tasksWorkedOn : [])
+      ]
+    };
+  });
+
+  return combined;
+};
+
+// Helper function to calculate total focus time
+const getTotalFocusTime = (combinedStats) => {
+  return Object.values(combinedStats).reduce((total, dayStats) => {
+    return total + (dayStats.totalFocusTime || 0);
+  }, 0);
+};
+
+// Helper function to calculate total focus sessions
+const getTotalFocusSessions = (combinedStats) => {
+  return Object.values(combinedStats).reduce((total, dayStats) => {
+    return total + (dayStats.focusSessions || 0);
+  }, 0);
+};
+
+// Helper function to calculate total pomodoro sessions
+const getTotalPomodoroSessions = (combinedStats) => {
+  return Object.values(combinedStats).reduce((total, dayStats) => {
+    return total + (dayStats.pomodoroSessions || 0);
+  }, 0);
+};
+
+// Helper function to get current streak
+const getCurrentStreak = (combinedStats) => {
+  const sortedDates = Object.keys(combinedStats).sort().reverse();
+  let streak = 0;
+  const today = new Date().toDateString();
+  
+  for (const dateStr of sortedDates) {
+    const date = new Date(dateStr);
+    const daysSinceToday = Math.floor((new Date(today) - date) / (1000 * 60 * 60 * 24));
+    
+    if (daysSinceToday === streak && combinedStats[dateStr].totalFocusTime > 0) {
+      streak++;
+    } else if (daysSinceToday > streak) {
+      break;
+    }
+  }
+  
+  return streak;
+};
+
+// Loading skeleton component
+const StatCardSkeleton = () => (
+  <div className="bg-gray-200 p-6 rounded-2xl animate-pulse">
+    <div className="h-4 bg-gray-300 rounded w-1/4 mb-2"></div>
+    <div className="h-8 bg-gray-300 rounded w-1/2"></div>
+  </div>
+);
+
+export default function DashboardContent() {
+  const { user, isLoaded } = useUser();
+  
+  const [userData, setUserData] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [combinedStats, setCombinedStats] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Default user data
+  const defaultUserData = {
+    name: user?.firstName || user?.fullName || 'User',
+    userId: user?.id || '',
+    xp: 0,
+    level: 1,
+    totalFocusTime: 0,
+    totalPomodoroSessions: 0,
+    currentStreak: 0,
+    history: [],
+    dailyStats: []
+  };
+
+  // Load combined stats from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const stats = getCombinedStats();
+      setCombinedStats(stats);
+    }
+  }, []);
+
+  // Refresh stats and tasks periodically (every 30 seconds)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof window !== 'undefined') {
+        const stats = getCombinedStats();
+        setCombinedStats(stats);
+        // Also refresh tasks to get latest completed tasks
+        fetchTasks();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch tasks from backend
+  const fetchTasks = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      // Use the same userId as TasksPage
+      const response = await taskApi.getTasks({ userId: "user123" });
+      
+      if (response.success && response.data) {
+        const backendTasks = Array.isArray(response.data) ? response.data : [];
+        setTasks(backendTasks);
+
+        // Get combined stats from localStorage
+        const stats = getCombinedStats();
+        
+        // Generate user data from tasks + combined stats
+        const generatedUserData = generateUserDataFromTasks(
+          backendTasks,
+          "user123",
+          "User"
+        );
+
+        // Enhance with combined stats
+        const enhancedUserData = {
+          ...generatedUserData,
+          totalFocusTime: Math.max(generatedUserData.totalFocusTime, getTotalFocusTime(stats)),
+          totalFocusSessions: getTotalFocusSessions(stats),
+          totalPomodoroSessions: Math.max(generatedUserData.totalPomodoroSessions, getTotalPomodoroSessions(stats)),
+          currentStreak: Math.max(generatedUserData.currentStreak, getCurrentStreak(stats))
+        };
+
+        setUserData(enhancedUserData);
+        
+      } else {
+        throw new Error(response.error || 'API request failed');
+      }
+      
+    } catch (err) {
+      console.error('❌ Error in fetchTasks:', err);
+      setError(`Failed to load data: ${err.message}`);
+      
+      // Set fallback data with combined stats
+      const stats = getCombinedStats();
+      setTasks([]);
+      setUserData({
+        ...defaultUserData,
+        totalFocusTime: getTotalFocusTime(stats),
+        totalFocusSessions: getTotalFocusSessions(stats),
+        totalPomodoroSessions: getTotalPomodoroSessions(stats),
+        currentStreak: getCurrentStreak(stats)
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Initialize data when component mounts
+  useEffect(() => {
+    const initializeData = async () => {
+      if (!isLoaded) return;
+      await fetchTasks();
+    };
+
+    initializeData();
+  }, [isLoaded]);
+
+  // Retry function
+  const handleRetry = () => {
+    setError(null);
+    fetchTasks();
+  };
+
+  // Loading state
+  if (!isLoaded || isLoading) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-8">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+          <div className="flex items-center space-x-2">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+            <span className="text-sm text-gray-500">Loading...</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+          <StatCardSkeleton />
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-8">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+        </div>
+        
+        <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-2xl mx-auto">
+          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-red-800 mb-4">Unable to Load Dashboard</h2>
+          <p className="text-red-600 mb-6">{error}</p>
+          <button 
+            onClick={handleRetry}
+            className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center space-x-2 mx-auto"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Retry Connection</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    name,
+    xp = 0,
+    level = 1,
+    totalFocusTime = 0,
+    totalFocusSessions = 0,
+    totalPomodoroSessions = 0,
+    currentStreak = 0,
+    dailyStats = []
+  } = userData || defaultUserData;
+
+  // Get completed tasks from the tasks array (same as TasksPage)
+  const completedTasks = tasks
+    .filter(task => task.status === 'completed')
+    .sort((a, b) => new Date(b.completedAt || b.updatedAt) - new Date(a.completedAt || a.updatedAt))
+    .slice(0, 10); // Show last 10 completed tasks
+
+  // Calculate total completed tasks count
+  const totalCompletedTasks = tasks.filter(task => task.status === 'completed').length;
+
+  // Prepare data for charts with combined stats
+  const weeklyFocusData = Array.from({ length: 7 }).map((_, index) => {
+    const targetDate = subDays(new Date(), 6 - index);
+    const dateStr = targetDate.toDateString();
+    const dayStats = combinedStats[dateStr];
+    const taskData = dailyStats.find(stat => isSameDay(new Date(stat.date), targetDate));
+    
+    return {
+      name: format(targetDate, 'E'),
+      focusTime: dayStats?.totalFocusTime || 0,
+      focusSessions: dayStats?.focusSessions || 0,
+      pomodoroSessions: dayStats?.pomodoroSessions || 0,
+      totalSessions: dayStats?.totalSessions || 0,
+      tasksCompleted: taskData?.tasksCompleted || 0,
+    };
+  });
+
+  return (
+    <div className="p-4 sm:p-6 lg:p-8">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+        <div className="text-right">
+          <p className="text-sm text-gray-500">Welcome back, {name}!</p>
+          <p className="text-xs text-gray-400">
+            {tasks.length === 0 
+              ? 'Create your first task to get started'
+              : `You have ${tasks.filter(t => t.status !== 'completed').length} active tasks`
+            }
+          </p>
+        </div>
+      </div>
+      
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+        <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+          <div>
+            <p className="text-gray-500 text-sm mb-1">Level</p>
+            <h2 className="text-3xl font-bold text-gray-800">{level}</h2>
+            <p className="text-sm text-gray-500">{xp} XP</p>
+          </div>
+          <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-white">
+            <Star size={24} fill="white" />
+          </div>
+        </div>
+        
+        <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+          <div>
+            <p className="text-gray-500 text-sm mb-1">Focus Time</p>
+            <h2 className="text-3xl font-bold text-gray-800">{totalFocusTime}<span className="text-base text-gray-500">m</span></h2>
+            <p className="text-sm text-gray-500">
+              {Math.round(totalFocusTime / 60 * 10) / 10}h total
+            </p>
+          </div>
+          <Clock className="w-10 h-10 text-blue-500" />
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+          <div>
+            <p className="text-gray-500 text-sm mb-1">Focus Sessions</p>
+            <h2 className="text-3xl font-bold text-gray-800">{totalFocusSessions || 0}</h2>
+            <p className="text-sm text-gray-500">
+              Deep work
+            </p>
+          </div>
+          <Target className="w-10 h-10 text-purple-500" />
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+          <div>
+            <p className="text-gray-500 text-sm mb-1">Pomodoros</p>
+            <h2 className="text-3xl font-bold text-gray-800">{totalPomodoroSessions}</h2>
+            <p className="text-sm text-gray-500">
+              Completed
+            </p>
+          </div>
+          <ListTodo className="w-10 h-10 text-green-500" />
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+          <div>
+            <p className="text-gray-500 text-sm mb-1">Tasks Done</p>
+            <h2 className="text-3xl font-bold text-gray-800">{totalCompletedTasks}</h2>
+            <p className="text-sm text-gray-500">
+              {tasks.filter(t => t.status === 'pending').length} pending
+            </p>
+          </div>
+          <CircleCheck className="w-10 h-10 text-emerald-500" />
+        </div>
+      </div>
+
+      {/* Weekly Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        {/* Focus Time Chart */}
+        <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Weekly Focus Time</h2>
+          {weeklyFocusData.some(d => d.focusTime > 0) ? (
+            <div style={{ width: '100%', height: 250 }}>
+              <ResponsiveContainer>
+                <AreaChart data={weeklyFocusData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip 
+                    formatter={(value, name) => [
+                      name === 'focusTime' ? `${value} min` : value,
+                      name === 'focusTime' ? 'Focus Time' : name
+                    ]} 
+                  />
+                  <Area type="monotone" dataKey="focusTime" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center py-12 text-gray-500">
+              <Clock className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Start a focus session to see your progress!</p>
+            </div>
+          )}
+        </div>
+
+        {/* Sessions Chart */}
+        <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Weekly Sessions</h2>
+          {weeklyFocusData.some(d => d.totalSessions > 0) ? (
+            <div style={{ width: '100%', height: 250 }}>
+              <ResponsiveContainer>
+                <LineChart data={weeklyFocusData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip 
+                    formatter={(value, name) => [
+                      value,
+                      name === 'focusSessions' ? 'Focus Sessions' :
+                      name === 'pomodoroSessions' ? 'Pomodoro Sessions' : name
+                    ]} 
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="focusSessions" 
+                    stroke="#8b5cf6" 
+                    strokeWidth={2}
+                    dot={{ fill: '#8b5cf6', strokeWidth: 2, r: 3 }}
+                    name="focusSessions"
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="pomodoroSessions" 
+                    stroke="#10b981" 
+                    strokeWidth={2}
+                    dot={{ fill: '#10b981', strokeWidth: 2, r: 3 }}
+                    name="pomodoroSessions"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="text-center py-12 text-gray-500">
+              <Target className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Complete sessions to see your progress chart!</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recent Activity - Now showing completed tasks from TasksPage */}
+      <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+        <h2 className="text-xl font-bold text-gray-800 mb-4">Recently Completed Tasks</h2>
+        {completedTasks.length > 0 ? (
+          <ul className="space-y-4">
+            {completedTasks.map((task, index) => (
+              <li key={task._id || index} className="flex items-center space-x-4 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+                <CircleCheck className="w-6 h-6 text-green-500 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-700 truncate">{task.title}</p>
+                  <div className="flex items-center space-x-2 text-sm text-gray-500">
+                    <span className={`px-2 py-1 rounded-full text-xs ${
+                      task.priority === 'high' ? 'bg-red-100 text-red-700' :
+                      task.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-blue-100 text-blue-700'
+                    }`}>
+                      {task.priority}
+                    </span>
+                    <span className="text-gray-400">•</span>
+                    <span>{task.category}</span>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-400 flex-shrink-0">
+                  {task.completedAt 
+                    ? format(new Date(task.completedAt), 'MMM d, h:mm a')
+                    : format(new Date(task.updatedAt), 'MMM d, h:mm a')
+                  }
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            <CircleCheck className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>No completed tasks yet.</p>
+            <p className="text-sm mt-1">Complete a task in focus or pomodoro mode to see it here!</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 'use client';
+// import React, { useState, useEffect } from 'react';
+// import { useUser } from '@clerk/nextjs';
+// import { CircleCheck, Clock, ListTodo, TrendingUp, Star, Loader2, AlertCircle, RefreshCw, Target } from 'lucide-react';
+// import { format, subDays, isSameDay } from 'date-fns';
+// import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+// import { taskApi, generateUserDataFromTasks } from '@/backend/lib/api';
+
+// // Helper function to get focus stats from localStorage
+// const getFocusStats = () => {
+//   if (typeof window === 'undefined') return {};
+//   try {
+//     return JSON.parse(localStorage.getItem('focusStats') || '{}');
+//   } catch {
+//     return {};
+//   }
+// };
+
+// // Helper function to calculate total focus time
+// const getTotalFocusTime = (focusStats) => {
+//   return Object.values(focusStats).reduce((total, dayStats) => {
+//     return total + (dayStats.totalFocusTime || 0);
+//   }, 0);
+// };
+
+// // Helper function to calculate total focus sessions
+// const getTotalFocusSessions = (focusStats) => {
+//   return Object.values(focusStats).reduce((total, dayStats) => {
+//     return total + (dayStats.sessionsCompleted || 0);
+//   }, 0);
+// };
+
+// // Helper function to get current streak
+// const getCurrentStreak = (focusStats) => {
+//   const sortedDates = Object.keys(focusStats).sort().reverse();
+//   let streak = 0;
+//   const today = new Date().toDateString();
+  
+//   for (const dateStr of sortedDates) {
+//     const date = new Date(dateStr);
+//     const daysSinceToday = Math.floor((new Date(today) - date) / (1000 * 60 * 60 * 24));
+    
+//     if (daysSinceToday === streak && focusStats[dateStr].totalFocusTime > 0) {
+//       streak++;
+//     } else if (daysSinceToday > streak) {
+//       break;
+//     }
+//   }
+  
+//   return streak;
+// };
+
+// // Loading skeleton component
+// const StatCardSkeleton = () => (
+//   <div className="bg-gray-200 p-6 rounded-2xl animate-pulse">
+//     <div className="h-4 bg-gray-300 rounded w-1/4 mb-2"></div>
+//     <div className="h-8 bg-gray-300 rounded w-1/2"></div>
+//   </div>
+// );
+
+// export default function DashboardContent() {
+//   const { user, isLoaded } = useUser();
+  
+//   const [userData, setUserData] = useState(null);
+//   const [tasks, setTasks] = useState([]);
+//   const [focusStats, setFocusStats] = useState({});
+//   const [isLoading, setIsLoading] = useState(true);
+//   const [error, setError] = useState(null);
+
+//   // Default user data
+//   const defaultUserData = {
+//     name: user?.firstName || user?.fullName || 'User',
+//     userId: user?.id || '',
+//     xp: 0,
+//     level: 1,
+//     totalFocusTime: 0,
+//     totalPomodoroSessions: 0,
+//     currentStreak: 0,
+//     history: [],
+//     dailyStats: []
+//   };
+
+//   // Load focus stats from localStorage
+//   useEffect(() => {
+//     if (typeof window !== 'undefined') {
+//       const stats = getFocusStats();
+//       setFocusStats(stats);
+//     }
+//   }, []);
+
+//   // Fetch tasks from backend
+//   const fetchTasks = async () => {
+//     if (!user?.id) {
+//       console.warn('⚠️ No user ID available');
+//       setIsLoading(false);
+//       return;
+//     }
+
+//     try {
+//       setIsLoading(true);
+//       setError(null);
+
+//       console.log('🔍 Starting data fetch process...');
+//       console.log('👤 User ID:', user.id);
+
+//       // Test connection first
+//       const connectionTest = await taskApi.testConnection();
+      
+//       if (!connectionTest.success) {
+//         console.error('❌ Backend connection failed:', connectionTest.error);
+//         setError(`Backend not available: ${connectionTest.error}`);
+        
+//         // Set fallback data with focus stats
+//         const stats = getFocusStats();
+//         setTasks([]);
+//         setUserData({
+//           ...defaultUserData,
+//           name: user.firstName || user.fullName || 'User',
+//           totalFocusTime: getTotalFocusTime(stats),
+//           currentStreak: getCurrentStreak(stats)
+//         });
+//         return;
+//       }
+
+//       // Fetch tasks
+//       const response = await taskApi.getTasks({ userId: user.id });
+      
+//       if (response.success && response.data) {
+//         const backendTasks = Array.isArray(response.data) ? response.data : [];
+//         setTasks(backendTasks);
+
+//         // Get focus stats from localStorage
+//         const stats = getFocusStats();
+        
+//         // Generate user data from tasks + focus stats
+//         const generatedUserData = generateUserDataFromTasks(
+//           backendTasks,
+//           user.id,
+//           user.firstName || user.fullName || 'User'
+//         );
+
+//         // Enhance with focus stats
+//         const enhancedUserData = {
+//           ...generatedUserData,
+//           totalFocusTime: Math.max(generatedUserData.totalFocusTime, getTotalFocusTime(stats)),
+//           totalFocusSessions: getTotalFocusSessions(stats),
+//           currentStreak: Math.max(generatedUserData.currentStreak, getCurrentStreak(stats))
+//         };
+
+//         setUserData(enhancedUserData);
+        
+//       } else {
+//         throw new Error(response.error || 'API request failed');
+//       }
+      
+//     } catch (err) {
+//       console.error('❌ Error in fetchTasks:', err);
+//       setError(`Failed to load data: ${err.message}`);
+      
+//       // Set fallback data with focus stats
+//       const stats = getFocusStats();
+//       setTasks([]);
+//       setUserData({
+//         ...defaultUserData,
+//         name: user.firstName || user.fullName || 'User',
+//         totalFocusTime: getTotalFocusTime(stats),
+//         currentStreak: getCurrentStreak(stats)
+//       });
+//     } finally {
+//       setIsLoading(false);
+//     }
+//   };
+
+//   // Initialize data when component mounts
+//   useEffect(() => {
+//     const initializeData = async () => {
+//       if (!isLoaded) return;
+      
+//       if (!user?.id) {
+//         const stats = getFocusStats();
+//         setUserData({
+//           ...defaultUserData,
+//           totalFocusTime: getTotalFocusTime(stats),
+//           currentStreak: getCurrentStreak(stats)
+//         });
+//         setIsLoading(false);
+//         return;
+//       }
+
+//       await fetchTasks();
+//     };
+
+//     initializeData();
+//   }, [isLoaded, user?.id]);
+
+//   // Retry function
+//   const handleRetry = () => {
+//     setError(null);
+//     fetchTasks();
+//   };
+
+//   // Loading state
+//   if (!isLoaded || isLoading) {
+//     return (
+//       <div className="p-4 sm:p-6 lg:p-8">
+//         <div className="flex justify-between items-center mb-6">
+//           <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+//           <div className="flex items-center space-x-2">
+//             <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+//             <span className="text-sm text-gray-500">Loading...</span>
+//           </div>
+//         </div>
+//         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+//           <StatCardSkeleton />
+//           <StatCardSkeleton />
+//           <StatCardSkeleton />
+//           <StatCardSkeleton />
+//           <StatCardSkeleton />
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   // Error state
+//   if (error) {
+//     return (
+//       <div className="p-4 sm:p-6 lg:p-8">
+//         <div className="flex justify-between items-center mb-6">
+//           <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+//         </div>
+        
+//         <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-2xl mx-auto">
+//           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+//           <h2 className="text-xl font-semibold text-red-800 mb-4">Unable to Load Dashboard</h2>
+//           <p className="text-red-600 mb-6">{error}</p>
+//           <button 
+//             onClick={handleRetry}
+//             className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center space-x-2 mx-auto"
+//           >
+//             <RefreshCw className="w-4 h-4" />
+//             <span>Retry Connection</span>
+//           </button>
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   // No user state
+//   if (!user) {
+//     return (
+//       <div className="p-4 sm:p-6 lg:p-8">
+//         <div className="text-center py-12">
+//           <h1 className="text-2xl font-bold text-gray-800 mb-4">Please Sign In</h1>
+//           <p className="text-gray-600">You need to be signed in to view your dashboard.</p>
+//         </div>
+//       </div>
+//     );
+//   }
+
+//   const {
+//     name,
+//     xp = 0,
+//     level = 1,
+//     totalFocusTime = 0,
+//     totalFocusSessions = 0,
+//     totalPomodoroSessions = 0,
+//     currentStreak = 0,
+//     history = [],
+//     dailyStats = []
+//   } = userData || defaultUserData;
+
+//   // Prepare data for charts
+//   const weeklyFocusData = Array.from({ length: 7 }).map((_, index) => {
+//     const targetDate = subDays(new Date(), 6 - index);
+//     const dateStr = targetDate.toDateString();
+//     const focusData = focusStats[dateStr];
+//     const taskData = dailyStats.find(stat => isSameDay(new Date(stat.date), targetDate));
+    
+//     return {
+//       name: format(targetDate, 'E'),
+//       focusTime: focusData?.totalFocusTime || 0,
+//       tasksCompleted: taskData?.tasksCompleted || 0,
+//     };
+//   });
+
+//   return (
+//     <div className="p-4 sm:p-6 lg:p-8">
+//       {/* Header */}
+//       <div className="flex justify-between items-center mb-6">
+//         <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+//         <div className="text-right">
+//           <p className="text-sm text-gray-500">Welcome back, {name}!</p>
+//           <p className="text-xs text-gray-400">
+//             {tasks.length === 0 
+//               ? 'Create your first task to get started'
+//               : `You have ${tasks.filter(t => t.status !== 'completed').length} active tasks`
+//             }
+//           </p>
+//         </div>
+//       </div>
+      
+//       {/* Stats Cards */}
+//       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+//         <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+//           <div>
+//             <p className="text-gray-500 text-sm mb-1">Level</p>
+//             <h2 className="text-3xl font-bold text-gray-800">{level}</h2>
+//             <p className="text-sm text-gray-500">{xp} XP</p>
+//           </div>
+//           <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-white">
+//             <Star size={24} fill="white" />
+//           </div>
+//         </div>
+        
+//         <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+//           <div>
+//             <p className="text-gray-500 text-sm mb-1">Focus Time</p>
+//             <h2 className="text-3xl font-bold text-gray-800">{totalFocusTime}<span className="text-base text-gray-500">m</span></h2>
+//             <p className="text-sm text-gray-500">
+//               {Math.round(totalFocusTime / 60 * 10) / 10}h total
+//             </p>
+//           </div>
+//           <Clock className="w-10 h-10 text-blue-500" />
+//         </div>
+
+//         <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+//           <div>
+//             <p className="text-gray-500 text-sm mb-1">Focus Sessions</p>
+//             <h2 className="text-3xl font-bold text-gray-800">{totalFocusSessions || 0}</h2>
+//             <p className="text-sm text-gray-500">
+//               Completed
+//             </p>
+//           </div>
+//           <Target className="w-10 h-10 text-purple-500" />
+//         </div>
+
+//         <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+//           <div>
+//             <p className="text-gray-500 text-sm mb-1">Tasks Done</p>
+//             <h2 className="text-3xl font-bold text-gray-800">{totalPomodoroSessions}</h2>
+//             <p className="text-sm text-gray-500">
+//               {tasks.filter(t => t.status === 'pending').length} pending
+//             </p>
+//           </div>
+//           <ListTodo className="w-10 h-10 text-green-500" />
+//         </div>
+
+//         <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+//           <div>
+//             <p className="text-gray-500 text-sm mb-1">Streak</p>
+//             <h2 className="text-3xl font-bold text-gray-800">{currentStreak}<span className="text-base text-gray-500">d</span></h2>
+//             <p className="text-sm text-gray-500">
+//               {currentStreak > 0 ? 'Keep it up!' : 'Start today!'}
+//             </p>
+//           </div>
+//           <TrendingUp className="w-10 h-10 text-indigo-500" />
+//         </div>
+//       </div>
+
+//       {/* Weekly Charts */}
+//       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+//         {/* Focus Time Chart */}
+//         <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+//           <h2 className="text-xl font-bold text-gray-800 mb-4">Weekly Focus Time</h2>
+//           {weeklyFocusData.some(d => d.focusTime > 0) ? (
+//             <div style={{ width: '100%', height: 250 }}>
+//               <ResponsiveContainer>
+//                 <AreaChart data={weeklyFocusData}>
+//                   <CartesianGrid strokeDasharray="3 3" />
+//                   <XAxis dataKey="name" />
+//                   <YAxis />
+//                   <Tooltip formatter={(value) => [`${value} min`, 'Focus Time']} />
+//                   <Area type="monotone" dataKey="focusTime" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} />
+//                 </AreaChart>
+//               </ResponsiveContainer>
+//             </div>
+//           ) : (
+//             <div className="text-center py-12 text-gray-500">
+//               <Clock className="w-12 h-12 mx-auto mb-4 opacity-50" />
+//               <p>Start a focus session to see your progress!</p>
+//             </div>
+//           )}
+//         </div>
+
+//         {/* Task Completion Chart */}
+//         <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+//           <h2 className="text-xl font-bold text-gray-800 mb-4">Weekly Task Completion</h2>
+//           {weeklyFocusData.some(d => d.tasksCompleted > 0) ? (
+//             <div style={{ width: '100%', height: 250 }}>
+//               <ResponsiveContainer>
+//                 <LineChart data={weeklyFocusData}>
+//                   <CartesianGrid strokeDasharray="3 3" />
+//                   <XAxis dataKey="name" />
+//                   <YAxis allowDecimals={false} />
+//                   <Tooltip formatter={(value) => [value, 'Tasks Completed']} />
+//                   <Line 
+//                     type="monotone" 
+//                     dataKey="tasksCompleted" 
+//                     stroke="#10b981" 
+//                     strokeWidth={3}
+//                     dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
+//                   />
+//                 </LineChart>
+//               </ResponsiveContainer>
+//             </div>
+//           ) : (
+//             <div className="text-center py-12 text-gray-500">
+//               <ListTodo className="w-12 h-12 mx-auto mb-4 opacity-50" />
+//               <p>Complete tasks to see your progress chart!</p>
+//             </div>
+//           )}
+//         </div>
+//       </div>
+
+//       {/* Recent Activity */}
+//       <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+//         <h2 className="text-xl font-bold text-gray-800 mb-4">Recent Activity</h2>
+//         {history && history.length > 0 ? (
+//           <ul className="space-y-4">
+//             {history.slice(0, 5).map((activity, index) => (
+//               <li key={activity._id || index} className="flex items-center space-x-4 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+//                 <CircleCheck className="w-6 h-6 text-green-500 flex-shrink-0" />
+//                 <div className="flex-1 min-w-0">
+//                   <p className="font-semibold text-gray-700 truncate">{activity.title}</p>
+//                   <p className="text-sm text-gray-500">{activity.type}</p>
+//                 </div>
+//                 <p className="text-sm text-gray-400 flex-shrink-0">
+//                   {format(new Date(activity.completedAt), 'MMM d')}
+//                 </p>
+//               </li>
+//             ))}
+//           </ul>
+//         ) : (
+//           <div className="text-center py-8 text-gray-500">
+//             <CircleCheck className="w-12 h-12 mx-auto mb-4 opacity-50" />
+//             <p>No completed tasks yet.</p>
+//             <p className="text-sm mt-1">Finish a task to see it here!</p>
+//           </div>
+//         )}
+//       </div>
+//     </div>
+//   );
+// }
+
+// //   'use client';
+// //   import React, { useState, useEffect } from 'react';
+// //   import { useUser } from '@clerk/nextjs';
+// //   import { CircleCheck, Clock, ListTodo, TrendingUp, Star, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+// //   import { format, subDays, isSameDay } from 'date-fns';
+// //   import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+// //   import { taskApi, generateUserDataFromTasks } from '@/backend/lib/api';
+
+// //   // Loading skeleton component
+// //   const StatCardSkeleton = () => (
+// //     <div className="bg-gray-200 p-6 rounded-2xl animate-pulse">
+// //       <div className="h-4 bg-gray-300 rounded w-1/4 mb-2"></div>
+// //       <div className="h-8 bg-gray-300 rounded w-1/2"></div>
+// //     </div>
+// //   );
+
+// //   export default function DashboardContent() {
+// //     // Clerk user
+// //     const { user, isLoaded } = useUser();
+    
+// //     // State management
+// //     const [userData, setUserData] = useState(null);
+// //     const [tasks, setTasks] = useState([]);
+// //     const [isLoading, setIsLoading] = useState(true);
+// //     const [error, setError] = useState(null);
+
+// //     // Default user data
+// //     const defaultUserData = {
+// //       name: user?.firstName || user?.fullName || 'User',
+// //       userId: user?.id || '',
+// //       xp: 0,
+// //       level: 1,
+// //       totalFocusTime: 0,
+// //       totalPomodoroSessions: 0,
+// //       currentStreak: 0,
+// //       history: [],
+// //       dailyStats: []
+// //     };
+
+// //     // Fetch tasks from backend
+// //     const fetchTasks = async () => {
+// //       if (!user?.id) {
+// //         console.warn('⚠️ No user ID available');
+// //         setIsLoading(false);
+// //         return;
+// //       }
+
+// //       try {
+// //         setIsLoading(true);
+// //         setError(null);
+
+// //         console.log('🔍 Starting data fetch process...');
+// //         console.log('👤 User ID:', user.id);
+// //         console.log('👤 User name:', user.firstName || user.fullName);
+
+// //         // Test connection first
+// //         console.log('🧪 Testing backend connection...');
+// //         const connectionTest = await taskApi.testConnection();
+        
+// //         if (!connectionTest.success) {
+// //           console.error('❌ Backend connection failed:', connectionTest.error);
+// //           setError(`Backend not available: ${connectionTest.error}`);
+          
+// //           // Set fallback data
+// //           setTasks([]);
+// //           setUserData({
+// //             ...defaultUserData,
+// //             name: user.firstName || user.fullName || 'User'
+// //           });
+// //           return;
+// //         }
+
+// //         console.log('✅ Backend connection successful');
+
+// //         // Fetch tasks
+// //         console.log('📡 Fetching tasks from backend...');
+// //         const response = await taskApi.getTasks({ userId: user.id });
+        
+// //         console.log('📡 API Response:', {
+// //           success: response.success,
+// //           dataType: typeof response.data,
+// //           dataLength: Array.isArray(response.data) ? response.data.length : 'Not array',
+// //           error: response.error
+// //         });
+        
+// //         if (response.success && response.data) {
+// //           const backendTasks = Array.isArray(response.data) ? response.data : [];
+// //           console.log(`✅ Successfully loaded ${backendTasks.length} tasks`);
+          
+// //           setTasks(backendTasks);
+
+// //           // Generate user data from tasks
+// //           const generatedUserData = generateUserDataFromTasks(
+// //             backendTasks,
+// //             user.id,
+// //             user.firstName || user.fullName || 'User'
+// //           );
+
+// //           setUserData(generatedUserData);
+          
+// //           console.log('✅ Data fetch completed successfully');
+          
+// //         } else {
+// //           console.error('❌ API returned unsuccessful response:', response);
+// //           throw new Error(response.error || response.message || 'API request failed');
+// //         }
+        
+// //       } catch (err) {
+// //         console.error('❌ Error in fetchTasks:', err);
+// //         console.error('❌ Error stack:', err.stack);
+        
+// //         setError(`Failed to load data: ${err.message}`);
+        
+// //         // Set fallback data
+// //         setTasks([]);
+// //         setUserData({
+// //           ...defaultUserData,
+// //           name: user.firstName || user.fullName || 'User'
+// //         });
+// //       } finally {
+// //         setIsLoading(false);
+// //       }
+// //     };
+
+// //     // Initialize data when component mounts
+// //     useEffect(() => {
+// //       const initializeData = async () => {
+// //         if (!isLoaded) return;
+        
+// //         if (!user?.id) {
+// //           console.log('👤 No user available, setting default data');
+// //           setUserData(defaultUserData);
+// //           setIsLoading(false);
+// //           return;
+// //         }
+
+// //         await fetchTasks();
+// //       };
+
+// //       initializeData();
+// //     }, [isLoaded, user?.id]);
+
+// //     // Retry function
+// //     const handleRetry = () => {
+// //       setError(null);
+// //       fetchTasks();
+// //     };
+
+// //     // Loading state
+// //     if (!isLoaded || isLoading) {
+// //       return (
+// //         <div className="p-4 sm:p-6 lg:p-8">
+// //           <div className="flex justify-between items-center mb-6">
+// //             <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+// //             <div className="flex items-center space-x-2">
+// //               <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+// //               <span className="text-sm text-gray-500">Loading...</span>
+// //             </div>
+// //           </div>
+// //           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+// //             <StatCardSkeleton />
+// //             <StatCardSkeleton />
+// //             <StatCardSkeleton />
+// //             <StatCardSkeleton />
+// //           </div>
+// //           <div className="bg-gray-200 p-6 rounded-2xl shadow-lg h-80 animate-pulse"></div>
+// //         </div>
+// //       );
+// //     }
+
+// //     // Error state
+// //     if (error) {
+// //       return (
+// //         <div className="p-4 sm:p-6 lg:p-8">
+// //           <div className="flex justify-between items-center mb-6">
+// //             <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+// //           </div>
+          
+// //           <div className="bg-red-50 border border-red-200 rounded-xl p-8 text-center max-w-2xl mx-auto">
+// //             <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+// //             <h2 className="text-xl font-semibold text-red-800 mb-4">Unable to Load Dashboard</h2>
+// //             <p className="text-red-600 mb-6 leading-relaxed">{error}</p>
+            
+// //             <div className="space-y-4">
+// //               <button 
+// //                 onClick={handleRetry}
+// //                 className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center justify-center space-x-2 mx-auto"
+// //               >
+// //                 <RefreshCw className="w-4 h-4" />
+// //                 <span>Retry Connection</span>
+// //               </button>
+              
+// //               <div className="text-sm text-red-700 bg-red-100 p-4 rounded-lg">
+// //                 <strong>Troubleshooting:</strong>
+// //                 <ul className="mt-2 space-y-1 text-left">
+// //                   <li>• Make sure your backend server is running on port 5000</li>
+// //                   <li>• Check that MongoDB is connected</li>
+// //                   <li>• Verify your environment variables are correct</li>
+// //                 </ul>
+// //               </div>
+// //             </div>
+// //           </div>
+// //         </div>
+// //       );
+// //     }
+
+// //     // No user state
+// //     if (!user) {
+// //       return (
+// //         <div className="p-4 sm:p-6 lg:p-8">
+// //           <div className="text-center py-12">
+// //             <h1 className="text-2xl font-bold text-gray-800 mb-4">Please Sign In</h1>
+// //             <p className="text-gray-600">You need to be signed in to view your dashboard.</p>
+// //           </div>
+// //         </div>
+// //       );
+// //     }
+
+// //     // Use props directly or fallback to default
+// //     const {
+// //       name,
+// //       xp = 0,
+// //       level = 1,
+// //       totalFocusTime = 0,
+// //       totalPomodoroSessions = 0,
+// //       currentStreak = 0,
+// //       history = [],
+// //       dailyStats = []
+// //     } = userData || defaultUserData;
+
+// //     // Prepare data for the weekly chart
+// //     const weeklyData = Array.from({ length: 7 }).map((_, index) => {
+// //       const targetDate = subDays(new Date(), 6 - index);
+// //       const dayStat = dailyStats.find(stat => isSameDay(new Date(stat.date), targetDate));
+// //       return {
+// //         name: format(targetDate, 'E'), // e.g., 'Mon'
+// //         tasksCompleted: dayStat ? dayStat.tasksCompleted : 0,
+// //       };
+// //     });
+
+// //     return (
+// //       <div className="p-4 sm:p-6 lg:p-8">
+// //         {/* Header */}
+// //         <div className="flex justify-between items-center mb-6">
+// //           <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
+// //           <div className="text-right">
+// //             <p className="text-sm text-gray-500">Welcome back, {name}!</p>
+// //             <p className="text-xs text-gray-400">
+// //               {tasks.length === 0 
+// //                 ? 'Create your first task to get started'
+// //                 : `You have ${tasks.filter(t => t.status !== 'completed').length} active tasks`
+// //               }
+// //             </p>
+// //           </div>
+// //         </div>
+        
+// //         {/* Stats Cards */}
+// //         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+// //           <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+// //             <div>
+// //               <p className="text-gray-500 text-sm mb-1">Level</p>
+// //               <h2 className="text-3xl font-bold text-gray-800">{level}</h2>
+// //               <p className="text-sm text-gray-500">{xp} XP</p>
+// //             </div>
+// //             <div className="w-12 h-12 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full flex items-center justify-center text-white">
+// //               <Star size={24} fill="white" />
+// //             </div>
+// //           </div>
+          
+// //           <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+// //             <div>
+// //               <p className="text-gray-500 text-sm mb-1">Total Focus Time</p>
+// //               <h2 className="text-3xl font-bold text-gray-800">{totalFocusTime} <span className="text-base text-gray-500">min</span></h2>
+// //               <p className="text-sm text-gray-500">
+// //                 {Math.round(totalFocusTime / 60 * 10) / 10} hours
+// //               </p>
+// //             </div>
+// //             <Clock className="w-10 h-10 text-blue-500" />
+// //           </div>
+
+// //           <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+// //             <div>
+// //               <p className="text-gray-500 text-sm mb-1">Completed Tasks</p>
+// //               <h2 className="text-3xl font-bold text-gray-800">{totalPomodoroSessions}</h2>
+// //               <p className="text-sm text-gray-500">
+// //                 {tasks.filter(t => t.status === 'pending').length} pending
+// //               </p>
+// //             </div>
+// //             <ListTodo className="w-10 h-10 text-green-500" />
+// //           </div>
+
+// //           <div className="bg-white p-6 rounded-2xl shadow-lg flex items-center justify-between hover:shadow-xl transition-shadow">
+// //             <div>
+// //               <p className="text-gray-500 text-sm mb-1">Current Streak</p>
+// //               <h2 className="text-3xl font-bold text-gray-800">{currentStreak} <span className="text-base text-gray-500">days</span></h2>
+// //               <p className="text-sm text-gray-500">
+// //                 {currentStreak > 0 ? 'Keep it up!' : 'Start today!'}
+// //               </p>
+// //             </div>
+// //             <TrendingUp className="w-10 h-10 text-indigo-500" />
+// //           </div>
+// //         </div>
+
+// //         {/* Weekly Chart */}
+// //         <div className="bg-white p-6 rounded-2xl shadow-lg mb-8 hover:shadow-xl transition-shadow">
+// //           <h2 className="text-xl font-bold text-gray-800 mb-4">Weekly Task Completion</h2>
+// //           {weeklyData.some(d => d.tasksCompleted > 0) ? (
+// //             <div style={{ width: '100%', height: 300 }}>
+// //               <ResponsiveContainer>
+// //                 <LineChart data={weeklyData}>
+// //                   <CartesianGrid strokeDasharray="3 3" />
+// //                   <XAxis dataKey="name" />
+// //                   <YAxis allowDecimals={false} />
+// //                   <Tooltip 
+// //                     formatter={(value) => [value, 'Tasks Completed']}
+// //                     labelFormatter={(label) => `Day: ${label}`}
+// //                   />
+// //                   <Line 
+// //                     type="monotone" 
+// //                     dataKey="tasksCompleted" 
+// //                     name="Tasks Completed" 
+// //                     stroke="#6366f1" 
+// //                     strokeWidth={3}
+// //                     dot={{ fill: '#6366f1', strokeWidth: 2, r: 4 }}
+// //                     activeDot={{ r: 6 }}
+// //                   />
+// //                 </LineChart>
+// //               </ResponsiveContainer>
+// //             </div>
+// //           ) : (
+// //             <div className="text-center py-12 text-gray-500">
+// //               <ListTodo className="w-12 h-12 mx-auto mb-4 opacity-50" />
+// //               <p>Complete some tasks to see your progress chart!</p>
+// //             </div>
+// //           )}
+// //         </div>
+
+// //         {/* Recent Activity */}
+// //         <div className="bg-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
+// //           <h2 className="text-xl font-bold text-gray-800 mb-4">Recent Activity</h2>
+// //           {history && history.length > 0 ? (
+// //             <ul className="space-y-4">
+// //               {history.slice(0, 5).map((activity, index) => (
+// //                 <li key={activity._id || index} className="flex items-center space-x-4 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+// //                   <CircleCheck className="w-6 h-6 text-green-500 flex-shrink-0" />
+// //                   <div className="flex-1 min-w-0">
+// //                     <p className="font-semibold text-gray-700 truncate">{activity.title}</p>
+// //                     <p className="text-sm text-gray-500">{activity.type}</p>
+// //                   </div>
+// //                   <p className="text-sm text-gray-400 flex-shrink-0">
+// //                     {format(new Date(activity.completedAt), 'MMM d')}
+// //                   </p>
+// //                 </li>
+// //               ))}
+// //             </ul>
+// //           ) : (
+// //             <div className="text-center py-8 text-gray-500">
+// //               <CircleCheck className="w-12 h-12 mx-auto mb-4 opacity-50" />
+// //               <p>No completed tasks yet.</p>
+// //               <p className="text-sm mt-1">Finish a task to see it here!</p>
+// //             </div>
+// //           )}
+// //         </div>
+// //       </div>
+// //     );
+// //   }
+
+// // // 'use client';
+// // // import React, { useState, useEffect } from 'react';
+// // // import { useUser } from '@clerk/nextjs';
+// // // import { Menu, X, Loader2 } from 'lucide-react';
+// // // import { format } from 'date-fns';
+// // // import { taskApi, generateUserDataFromTasks } from '@/backend/lib/api';
+
+// // // // Import all the components
+// // // import Sidebar from '@/app/components/Sidebar';
+// // // import DashboardContent from '@/app/components/DashboardContent';
+// // // import FocusModeContent from '@/app/components/FocusModeContent';
+// // // import PomodoroContent from '@/app/components/PomodoroContent';
+// // // import TasksPage from '@/app/components/TasksPage';
+// // // import SettingsContent from '@/app/components/SettingsContent';
+// // // import ProfileContent from '@/app/components/ProfileContent';
+// // // import AIAssistantContent from '@/app/components/AIAssistantContent';
+// // // import ProductivityModal from '@/app/components/ProductivityModal';
+// // // import WelcomeModal from '@/app/components/WelcomeModal';
+
+// // // export default function Home() {
+// // //   // Clerk user
+// // //   const { user, isLoaded } = useUser();
+  
+// // //   // UI State
+// // //   const [activeSection, setActiveSection] = useState('tasks');
+// // //   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+// // //   const [activeTask, setActiveTask] = useState(null);
+  
+// // //   // Data State
+// // //   const [tasks, setTasks] = useState([]);
+// // //   const [userData, setUserData] = useState(null);
+// // //   const [productivityLevel, setProductivityLevel] = useState(null);
+  
+// // //   // Modal State
+// // //   const [showProductivityModal, setShowProductivityModal] = useState(false);
+// // //   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  
+// // //   // Loading State
+// // //   const [isLoading, setIsLoading] = useState(true);
+// // //   const [isInitialized, setIsInitialized] = useState(false);
+
+// // //   // Default user data
+// // //   const defaultUserData = {
+// // //     name: user?.firstName || user?.fullName || 'User',
+// // //     userId: user?.id || '',
+// // //     totalTasksCompleted: 0,
+// // //     totalFocusTime: 0,
+// // //     totalPomodoroSessions: 0,
+// // //     currentStreak: 0,
+// // //     xp: 0,
+// // //     level: 1,
+// // //     dailyStats: [],
+// // //     history: [],
+// // //     stats: { pending: 0, inProgress: 0, completed: 0, total: 0 }
+// // //   };
+
+// // //   // Initialize data when user loads
+// // //   useEffect(() => {
+// // //     const initializeData = async () => {
+// // //       if (!isLoaded) return;
+      
+// // //       if (!user?.id) {
+// // //         setIsLoading(false);
+// // //         return;
+// // //       }
+
+// // //       try {
+// // //         setIsLoading(true);
+
+// // //         // Check if user is new (first time)
+// // //         const isNewUser = !localStorage.getItem(`user-initialized-${user.id}`);
+        
+// // //         // Load productivity level from localStorage
+// // //         const storedProductivity = localStorage.getItem(`productivity-level-${user.id}`);
+// // //         if (storedProductivity) {
+// // //           setProductivityLevel(storedProductivity);
+// // //         }
+
+// // //         // Fetch tasks from backend
+// // //         await fetchTasks();
+
+// // //         // Show modals for new users
+// // //         if (isNewUser) {
+// // //           setShowWelcomeModal(true);
+// // //         } else if (!storedProductivity) {
+// // //           setShowProductivityModal(true);
+// // //         }
+
+// // //         // Mark user as initialized
+// // //         localStorage.setItem(`user-initialized-${user.id}`, 'true');
+// // //         setIsInitialized(true);
+
+// // //       } catch (error) {
+// // //         console.error('Error initializing data:', error);
+// // //         setUserData(defaultUserData);
+// // //       } finally {
+// // //         setIsLoading(false);
+// // //       }
+// // //     };
+
+// // //     initializeData();
+// // //   }, [isLoaded, user?.id]);
+
+// // //   // Fetch tasks from backend
+// // //  // Update your fetchTasks function in DashboardContent.jsx
+// // // const fetchTasks = async () => {
+// // //   if (!user?.id) {
+// // //     console.warn('⚠️ No user ID available');
+// // //     return;
+// // //   }
+
+// // //   try {
+// // //     setLoading(true);
+// // //     setError(null);
+
+// // //     console.log('🔍 Starting data fetch process...');
+// // //     console.log('👤 User ID:', user.id);
+// // //     console.log('👤 User name:', user.firstName || user.fullName);
+
+// // //     // Test connection first
+// // //     console.log('🧪 Testing backend connection...');
+// // //     const connectionTest = await taskApi.testConnection();
+    
+// // //     if (!connectionTest.success) {
+// // //       console.error('❌ Backend connection failed:', connectionTest.error);
+// // //       setError(`Backend not available: ${connectionTest.error}`);
+      
+// // //       // Set fallback data
+// // //       setTasks([]);
+// // //       setUserData({
+// // //         ...defaultUserData,
+// // //         name: user.firstName || user.fullName || 'User'
+// // //       });
+// // //       return;
+// // //     }
+
+// // //     console.log('✅ Backend connection successful');
+
+// // //     // Fetch tasks
+// // //     console.log('📡 Fetching tasks from backend...');
+// // //     const response = await taskApi.getTasks({ userId: user.id });
+    
+// // //     console.log('📡 API Response:', {
+// // //       success: response.success,
+// // //       dataType: typeof response.data,
+// // //       dataLength: Array.isArray(response.data) ? response.data.length : 'Not array',
+// // //       error: response.error
+// // //     });
+    
+// // //     if (response.success && response.data) {
+// // //       const backendTasks = Array.isArray(response.data) ? response.data : [];
+// // //       console.log(`✅ Successfully loaded ${backendTasks.length} tasks`);
+      
+// // //       // Convert backend tasks to local format
+// // //       const convertedTasks = backendTasks.map(task => ({
+// // //         id: task._id,
+// // //         _id: task._id,
+// // //         title: task.title,
+// // //         description: task.description,
+// // //         category: task.category,
+// // //         priority: task.priority,
+// // //         status: task.status,
+// // //         dueDate: task.dueDate,
+// // //         estimatedTime: task.estimatedTime,
+// // //         actualTime: task.actualTime,
+// // //         progress: task.progress,
+// // //         tags: task.tags,
+// // //         completed: task.status === 'completed',
+// // //         completedAt: task.completedAt,
+// // //         createdAt: task.createdAt,
+// // //         updatedAt: task.updatedAt,
+// // //         userId: task.userId
+// // //       }));
+
+// // //       setTasks(convertedTasks);
+
+// // //       // Generate user data
+// // //       const generatedUserData = generateUserDataFromTasks(
+// // //         backendTasks,
+// // //         user.id,
+// // //         user.firstName || user.fullName || 'User'
+// // //       );
+
+// // //       setUserData(generatedUserData);
+      
+// // //       console.log('✅ Data fetch completed successfully');
+      
+// // //     } else {
+// // //       console.error('❌ API returned unsuccessful response:', response);
+// // //       throw new Error(response.error || response.message || 'API request failed');
+// // //     }
+    
+// // //   } catch (err) {
+// // //     console.error('❌ Error in fetchTasks:', err);
+// // //     console.error('❌ Error stack:', err.stack);
+    
+// // //     setError(`Failed to load data: ${err.message}`);
+    
+// // //     // Set fallback data
+// // //     setTasks([]);
+// // //     setUserData({
+// // //       ...defaultUserData,
+// // //       name: user.firstName || user.fullName || 'User'
+// // //     });
+// // //   } finally {
+// // //     setLoading(false);
+// // //   }
+// // // };
+
+
+// // //   // Handle section navigation
+// // //   const handleSectionChange = (section, task = null) => {
+// // //     setActiveSection(section);
+// // //     setActiveTask(task);
+// // //     setIsSidebarOpen(false);
+// // //   };
+
+// // //   // Handle productivity level setting
+// // //   const handleSetProductivity = (level) => {
+// // //     setProductivityLevel(level);
+// // //     setShowProductivityModal(false);
+    
+// // //     // Save to localStorage
+// // //     if (user?.id) {
+// // //       localStorage.setItem(`productivity-level-${user.id}`, level);
+// // //     }
+// // //   };
+
+// // //   // Handle welcome modal completion
+// // //   const handleSetUserInfo = (info) => {
+// // //     setShowWelcomeModal(false);
+// // //     setShowProductivityModal(true);
+// // //   };
+
+// // //   // Handle task completion (for Pomodoro/Focus mode)
+// // //   const handleTaskCompletion = async (taskId, duration) => {
+// // //     try {
+// // //       // Complete task in backend
+// // //       const response = await taskApi.completeTask(taskId);
+      
+// // //       if (response.success) {
+// // //         // Update local tasks
+// // //         setTasks(prevTasks =>
+// // //           prevTasks.map(task =>
+// // //             task._id === taskId ? { ...task, status: 'completed', completedAt: new Date().toISOString() } : task
+// // //           )
+// // //         );
+
+// // //         // Refresh user data
+// // //         await fetchTasks();
+// // //       }
+// // //     } catch (error) {
+// // //       console.error('Error completing task:', error);
+// // //     }
+// // //   };
+
+// // //   // CRUD Operations for tasks
+// // //   const createTask = async (newTaskData) => {
+// // //     if (!user?.id) return;
+
+// // //     try {
+// // //       const taskToCreate = {
+// // //         ...newTaskData,
+// // //         userId: user.id,
+// // //         status: 'pending'
+// // //       };
+
+// // //       const response = await taskApi.createTask(taskToCreate);
+      
+// // //       if (response.success && response.data) {
+// // //         setTasks(prevTasks => [response.data, ...prevTasks]);
+// // //         await fetchTasks(); // Refresh to update stats
+// // //         return response.data;
+// // //       }
+// // //     } catch (error) {
+// // //       console.error('Error creating task:', error);
+// // //       throw error;
+// // //     }
+// // //   };
+
+// // //   const updateTask = async (taskId, updates) => {
+// // //     try {
+// // //       const response = await taskApi.updateTask(taskId, updates);
+      
+// // //       if (response.success && response.data) {
+// // //         setTasks(prevTasks =>
+// // //           prevTasks.map(task =>
+// // //             task._id === taskId ? response.data : task
+// // //           )
+// // //         );
+// // //         await fetchTasks(); // Refresh to update stats
+// // //         return response.data;
+// // //       }
+// // //     } catch (error) {
+// // //       console.error('Error updating task:', error);
+// // //       throw error;
+// // //     }
+// // //   };
+
+// // //   const deleteTask = async (taskId) => {
+// // //     try {
+// // //       const response = await taskApi.deleteTask(taskId);
+      
+// // //       if (response.success) {
+// // //         setTasks(prevTasks => prevTasks.filter(task => task._id !== taskId));
+// // //         await fetchTasks(); // Refresh to update stats
+// // //       }
+// // //     } catch (error) {
+// // //       console.error('Error deleting task:', error);
+// // //       throw error;
+// // //     }
+// // //   };
+
+// // //   // Render content based on active section
+// // //   const renderContent = () => {
+// // //     const commonProps = {
+// // //       tasks,
+// // //       userData,
+// // //       user,
+// // //       refreshData: fetchTasks
+// // //     };
+
+// // //     switch (activeSection) {
+// // //       case 'dashboard':
+// // //         return <DashboardContent {...commonProps} />;
+        
+// // //       case 'focus':
+// // //         return (
+// // //           <FocusModeContent
+// // //             {...commonProps}
+// // //             activeTask={activeTask}
+// // //             onTaskComplete={handleTaskCompletion}
+// // //           />
+// // //         );
+        
+// // //       case 'pomodoro':
+// // //         return (
+// // //           <PomodoroContent
+// // //             {...commonProps}
+// // //             activeTask={activeTask}
+// // //             onTaskComplete={handleTaskCompletion}
+// // //           />
+// // //         );
+        
+// // //       case 'tasks':
+// // //         return (
+// // //           <TasksPage
+// // //             {...commonProps}
+// // //             onPlayTask={handleSectionChange}
+// // //             productivityLevel={productivityLevel}
+// // //             createTask={createTask}
+// // //             updateTask={updateTask}
+// // //             deleteTask={deleteTask}
+// // //             onTaskComplete={handleTaskCompletion}
+// // //           />
+// // //         );
+        
+// // //       case 'settings':
+// // //         return (
+// // //           <SettingsContent
+// // //             {...commonProps}
+// // //             productivityLevel={productivityLevel}
+// // //             setProductivityLevel={setProductivityLevel}
+// // //           />
+// // //         );
+        
+// // //       case 'profile':
+// // //         return (
+// // //           <ProfileContent
+// // //             {...commonProps}
+// // //             productivityLevel={productivityLevel}
+// // //             setProductivityLevel={setProductivityLevel}
+// // //             setShowProductivityModal={setShowProductivityModal}
+// // //           />
+// // //         );
+        
+// // //       case 'ai':
+// // //         return <AIAssistantContent {...commonProps} />;
+        
+// // //       default:
+// // //         return <DashboardContent {...commonProps} />;
+// // //     }
+// // //   };
+
+// // //   // Loading state
+// // //   if (!isLoaded || isLoading) {
+// // //     return (
+// // //       <div className="flex items-center justify-center min-h-screen bg-gray-100">
+// // //         <div className="text-center">
+// // //           <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-4" />
+// // //           <p className="text-gray-600">Loading your workspace...</p>
+// // //         </div>
+// // //       </div>
+// // //     );
+// // //   }
+
+// // //   // Not authenticated
+// // //   if (!user) {
+// // //     return (
+// // //       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-indigo-900 via-purple-800 to-pink-700">
+// // //         <div className="text-center text-white">
+// // //           <h1 className="text-4xl font-bold mb-4">Welcome to Focus App</h1>
+// // //           <p className="text-xl mb-8">Please sign in to continue</p>
+// // //         </div>
+// // //       </div>
+// // //     );
+// // //   }
+
+// // //   return (
+// // //     <div className="flex flex-col md:flex-row h-screen bg-gray-100">
+// // //       {/* Mobile Header */}
+// // //       <div className="md:hidden p-4 flex justify-between items-center bg-white shadow-md">
+// // //         <h1 className="text-xl font-bold text-gray-800">Focus App</h1>
+// // //         <button
+// // //           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+// // //           className="p-2 rounded-lg text-gray-700 hover:bg-gray-200 transition-colors"
+// // //         >
+// // //           {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+// // //         </button>
+// // //       </div>
+
+// // //       {/* Mobile Overlay */}
+// // //       {isSidebarOpen && (
+// // //         <div
+// // //           className="fixed inset-0 z-40 bg-gray-900 bg-opacity-50 md:hidden"
+// // //           onClick={() => setIsSidebarOpen(false)}
+// // //         ></div>
+// // //       )}
+
+// // //       {/* Sidebar */}
+// // //       <Sidebar
+// // //         activeSection={activeSection}
+// // //         handleSectionChange={handleSectionChange}
+// // //         isSidebarOpen={isSidebarOpen}
+// // //         setIsSidebarOpen={setIsSidebarOpen}
+// // //         userData={userData}
+// // //       />
+
+// // //       {/* Main Content */}
+// // //       <main className="flex-1 flex flex-col overflow-y-auto">
+// // //         <div className="flex-1">
+// // //           {renderContent()}
+// // //         </div>
+// // //       </main>
+
+// // //       {/* Modals */}
+// // //       {showProductivityModal && (
+// // //         <ProductivityModal
+// // //           isOpen={showProductivityModal}
+// // //           onSubmit={handleSetProductivity}
+// // //         />
+// // //       )}
+
+// // //       {showWelcomeModal && (
+// // //         <WelcomeModal
+// // //           isOpen={showWelcomeModal}
+// // //           onSubmit={handleSetUserInfo}
+// // //           userName={user?.firstName || user?.fullName || 'User'}
+// // //         />
+// // //       )}
+// // //     </div>
+// // //   );
+// // // }
