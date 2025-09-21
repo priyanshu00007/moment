@@ -12,7 +12,7 @@ export default function RootLayout({ children }) {
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className="antialiased">
+        <body className="antialiased" suppressHydrationWarning={true} >
           <div className="min-h-screen bg-gray-50">
             {children}
             <Toaster 

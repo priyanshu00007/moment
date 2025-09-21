@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
+    await mongoose.connect("mongodb+srv://priyanshurathod518_db_user:mQVAwWmZHRhkzIA0@cluster0.8lb6qx3.mongodb.net/momentum_taskmanager?retryWrites=true&w=majority&appName=Cluster0", {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
