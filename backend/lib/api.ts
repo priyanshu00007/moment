@@ -4,9 +4,9 @@ import axios from 'axios';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 const BACKEND_BASE_URL = API_BASE_URL.replace('/api/v1', '');
 
-console.log('🔗 API Configuration:');
-console.log('📡 API Base URL:', API_BASE_URL);
-console.log('🖥️ Backend Base URL:', BACKEND_BASE_URL);
+console.log('API Configuration:');
+console.log('API Base URL:', API_BASE_URL);
+console.log('Backend Base URL:', BACKEND_BASE_URL);
 
 // Create axios instance
 const api = axios.create({
@@ -21,8 +21,8 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const fullUrl = `${config.baseURL}${config.url}`;
-    console.log(`📤 API Request: ${config.method?.toUpperCase()} ${fullUrl}`);
-    console.log('📤 Request config:', {
+    console.log(` API Request: ${config.method?.toUpperCase()} ${fullUrl}`);
+    console.log(' Request config:', {
       baseURL: config.baseURL,
       url: config.url,
       method: config.method,
@@ -31,7 +31,7 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
-    console.error('📤❌ Request Setup Error:', error);
+    console.error('Request Setup Error:', error);
     return Promise.reject(error);
   }
 );
@@ -39,8 +39,8 @@ api.interceptors.request.use(
 // Enhanced response interceptor
 api.interceptors.response.use(
   (response) => {
-    console.log(`📥✅ API Response: ${response.status} ${response.config?.url}`);
-    console.log('📥 Response data preview:', {
+    console.log(` API Response: ${response.status} ${response.config?.url}`);
+    console.log(' Response data preview:', {
       success: response.data?.success,
       dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'N/A',
       message: response.data?.message
@@ -62,30 +62,30 @@ api.interceptors.response.use(
       responseData: error.response?.data || 'NO_RESPONSE_DATA'
     };
     
-    console.error('📥❌ API Error Details:', errorDetails);
-    console.error('📥❌ Raw Error:', error);
-    console.error('📥❌ Error Stack:', error.stack);
+    console.error(' API Error Details:', errorDetails);
+    console.error(' Raw Error:', error);
+    console.error(' Error Stack:', error.stack);
     
     // Create enhanced error message
     let enhancedMessage = '';
     
     if (error.code === 'ECONNREFUSED') {
-      enhancedMessage = `❌ Connection refused to ${errorDetails.fullURL}. Backend server is not running.`;
-      console.error('🚨 SOLUTION: Start backend server with: cd backend && node server.js');
+      enhancedMessage = ` Connection refused to ${errorDetails.fullURL}. Backend server is not running.`;
+      console.error(' SOLUTION: Start backend server with: cd backend && node server.js');
     } else if (error.code === 'ERR_NETWORK') {
-      enhancedMessage = `❌ Network error connecting to ${errorDetails.fullURL}. Check if backend is accessible.`;
+      enhancedMessage = ` Network error connecting to ${errorDetails.fullURL}. Check if backend is accessible.`;
     } else if (error.code === 'ENOTFOUND') {
-      enhancedMessage = `❌ DNS resolution failed for ${errorDetails.baseURL}. Invalid server URL.`;
+      enhancedMessage = ` DNS resolution failed for ${errorDetails.baseURL}. Invalid server URL.`;
     } else if (error.code === 'ECONNABORTED' || error.code === 'TIMEOUT') {
-      enhancedMessage = `❌ Request timeout after ${errorDetails.timeout}ms to ${errorDetails.fullURL}.`;
+      enhancedMessage = ` Request timeout after ${errorDetails.timeout}ms to ${errorDetails.fullURL}.`;
     } else if (error.response?.status === 404) {
-      enhancedMessage = `❌ Endpoint not found: ${errorDetails.method} ${errorDetails.fullURL}`;
+      enhancedMessage = ` Endpoint not found: ${errorDetails.method} ${errorDetails.fullURL}`;
     } else if (error.response?.status === 500) {
-      enhancedMessage = `❌ Backend server error at ${errorDetails.fullURL}: ${error.response?.data?.message || 'Internal server error'}`;
+      enhancedMessage = ` Backend server error at ${errorDetails.fullURL}: ${error.response?.data?.message || 'Internal server error'}`;
     } else if (error.response?.status >= 400) {
-      enhancedMessage = `❌ API error ${errorDetails.status}: ${error.response?.data?.message || error.message}`;
+      enhancedMessage = ` API error ${errorDetails.status}: ${error.response?.data?.message || error.message}`;
     } else {
-      enhancedMessage = `❌ Unexpected error: ${error.message} (${errorDetails.fullURL})`;
+      enhancedMessage = ` Unexpected error: ${error.message} (${errorDetails.fullURL})`;
     }
     
     // Replace error message with enhanced version
@@ -99,8 +99,8 @@ export const taskApi = {
   // Test backend connection
   testConnection: async () => {
     try {
-      console.log('🔍 Testing backend connection...');
-      console.log('🔍 Testing URL:', `${BACKEND_BASE_URL}/health`);
+      console.log(' Testing backend connection...');
+      console.log(' Testing URL:', `${BACKEND_BASE_URL}/health`);
       
       const response = await axios.get(`${BACKEND_BASE_URL}/health`, { 
         timeout: 5000,
@@ -110,10 +110,10 @@ export const taskApi = {
         }
       });
       
-      console.log('✅ Backend connection successful:', response.data);
+      console.log(' Backend connection successful:', response.data);
       return { success: true, data: response.data };
     } catch (error) {
-      console.error('❌ Backend connection test failed:');
+      console.error(' Backend connection test failed:');
       console.error('Error message:', error.message);
       console.error('Error code:', error.code);
       console.error('Error status:', error.response?.status);
@@ -133,21 +133,21 @@ export const taskApi = {
   // Get all tasks with enhanced error handling
   getTasks: async (params = {}) => {
     try {
-      console.log('📋 Fetching tasks...');
-      console.log('📋 Request params:', params);
-      console.log('📋 Full URL will be:', `${API_BASE_URL}/tasks`);
+      console.log(' Fetching tasks...');
+      console.log(' Request params:', params);
+      console.log(' Full URL will be:', `${API_BASE_URL}/tasks`);
       
       const response = await api.get('/tasks', { params });
       
       const result = response.data;
-      console.log('✅ Tasks fetched successfully:');
+      console.log(' Tasks fetched successfully:');
       console.log('   - Success:', result.success);
       console.log('   - Count:', result.count || result.data?.length || 0);
       console.log('   - Message:', result.message);
       
       return result;
     } catch (error) {
-      console.error('❌ getTasks failed:', error.message);
+      console.error(' getTasks failed:', error.message);
       
       // Return structured error response
       return {
@@ -168,13 +168,13 @@ export const taskApi = {
   // Get task by ID
   getTaskById: async (id) => {
     try {
-      console.log('📋 Fetching task by ID:', id);
+      console.log(' Fetching task by ID:', id);
       const response = await api.get(`/tasks/${id}`);
       
-      console.log('✅ Task fetched successfully:', response.data.data?.title);
+      console.log(' Task fetched successfully:', response.data.data?.title);
       return response.data;
     } catch (error) {
-      console.error('❌ getTaskById failed:', error.message);
+      console.error(' getTaskById failed:', error.message);
       throw error;
     }
   },
@@ -182,13 +182,13 @@ export const taskApi = {
   // Create task
   createTask: async (task) => {
     try {
-      console.log('📝 Creating task:', task.title);
+      console.log(' Creating task:', task.title);
       const response = await api.post('/tasks', task);
       
-      console.log('✅ Task created successfully:', response.data.data?.title);
+      console.log(' Task created successfully:', response.data.data?.title);
       return response.data;
     } catch (error) {
-      console.error('❌ createTask failed:', error.message);
+      console.error(' createTask failed:', error.message);
       throw error;
     }
   },
@@ -196,13 +196,13 @@ export const taskApi = {
   // Update task
   updateTask: async (id, updates) => {
     try {
-      console.log('🔄 Updating task:', id);
+      console.log(' Updating task:', id);
       const response = await api.put(`/tasks/${id}`, updates);
       
-      console.log('✅ Task updated successfully:', response.data.data?.title);
+      console.log(' Task updated successfully:', response.data.data?.title);
       return response.data;
     } catch (error) {
-      console.error('❌ updateTask failed:', error.message);
+      console.error(' updateTask failed:', error.message);
       throw error;
     }
   },
@@ -210,13 +210,13 @@ export const taskApi = {
   // Delete task
   deleteTask: async (id) => {
     try {
-      console.log('🗑️ Deleting task:', id);
+      console.log(' Deleting task:', id);
       const response = await api.delete(`/tasks/${id}`);
       
-      console.log('✅ Task deleted successfully');
+      console.log(' Task deleted successfully');
       return response.data;
     } catch (error) {
-      console.error('❌ deleteTask failed:', error.message);
+      console.error(' deleteTask failed:', error.message);
       throw error;
     }
   },
@@ -224,13 +224,13 @@ export const taskApi = {
   // Complete task (using PATCH endpoint)
   completeTask: async (id) => {
     try {
-      console.log('✅ Completing task:', id);
+      console.log(' Completing task:', id);
       const response = await api.patch(`/tasks/${id}/complete`);
       
-      console.log('✅ Task completed successfully');
+      console.log(' Task completed successfully');
       return response.data;
     } catch (error) {
-      console.error('❌ completeTask failed:', error.message);
+      console.error(' completeTask failed:', error.message);
       throw error;
     }
   },
@@ -238,7 +238,7 @@ export const taskApi = {
   // Update task progress
   updateTaskProgress: async (id, workedSeconds) => {
     try {
-      console.log('📊 Updating task progress:', id, 'worked seconds:', workedSeconds);
+      console.log(' Updating task progress:', id, 'worked seconds:', workedSeconds);
       
       // First get the task to calculate progress percentage
       const taskResponse = await api.get(`/tasks/${id}`);
@@ -256,10 +256,10 @@ export const taskApi = {
         status: task.status === 'pending' ? 'in-progress' : task.status
       });
       
-      console.log('✅ Task progress updated successfully');
+      console.log(' Task progress updated successfully');
       return response.data;
     } catch (error) {
-      console.error('❌ updateTaskProgress failed:', error.message);
+      console.error(' updateTaskProgress failed:', error.message);
       throw error;
     }
   },
@@ -267,13 +267,13 @@ export const taskApi = {
   // Get task statistics
   getTaskStats: async (userId) => {
     try {
-      console.log('📊 Fetching task statistics for user:', userId);
+      console.log(' Fetching task statistics for user:', userId);
       const response = await api.get(`/debug/all-data/${userId}`);
       
-      console.log('✅ Task statistics fetched successfully');
+      console.log(' Task statistics fetched successfully');
       return response.data;
     } catch (error) {
-      console.error('❌ getTaskStats failed:', error.message);
+      console.error(' getTaskStats failed:', error.message);
       throw error;
     }
   },
@@ -281,19 +281,19 @@ export const taskApi = {
   // Batch update tasks (useful for bulk operations)
   batchUpdateTasks: async (taskIds, updates) => {
     try {
-      console.log('🔄 Batch updating tasks:', taskIds.length, 'tasks');
+      console.log(' Batch updating tasks:', taskIds.length, 'tasks');
       
       const promises = taskIds.map(id => api.put(`/tasks/${id}`, updates));
       const responses = await Promise.all(promises);
       
-      console.log('✅ Batch update completed successfully');
+      console.log(' Batch update completed successfully');
       return {
         success: true,
         data: responses.map(r => r.data.data),
         count: responses.length
       };
     } catch (error) {
-      console.error('❌ batchUpdateTasks failed:', error.message);
+      console.error(' batchUpdateTasks failed:', error.message);
       throw error;
     }
   }
@@ -303,12 +303,12 @@ export const sessionApi = {
   // Create session
   create: async (payload) => {
     try {
-      console.log('📝 Creating session:', payload);
+      console.log(' Creating session:', payload);
       const response = await api.post('/sessions', payload);
-      console.log('✅ Session created successfully');
+      console.log(' Session created successfully');
       return response.data;
     } catch (error) {
-      console.error('❌ createSession failed:', error.message);
+      console.error(' createSession failed:', error.message);
       throw error;
     }
   },
@@ -316,13 +316,13 @@ export const sessionApi = {
   // Get sessions
   getSessions: async (params = {}) => {
     try {
-      console.log('📋 Fetching sessions...');
+      console.log(' Fetching sessions...');
       const response = await api.get('/sessions', { params });
       
-      console.log('✅ Sessions fetched successfully:', response.data.count);
+      console.log(' Sessions fetched successfully:', response.data.count);
       return response.data;
     } catch (error) {
-      console.error('❌ getSessions failed:', error.message);
+      console.error(' getSessions failed:', error.message);
       throw error;
     }
   },
@@ -330,15 +330,15 @@ export const sessionApi = {
   // Get sessions for a specific task
   getTaskSessions: async (taskId) => {
     try {
-      console.log('📋 Fetching sessions for task:', taskId);
+      console.log(' Fetching sessions for task:', taskId);
       const response = await api.get('/sessions', { 
         params: { taskId } 
       });
       
-      console.log('✅ Task sessions fetched successfully:', response.data.count);
+      console.log(' Task sessions fetched successfully:', response.data.count);
       return response.data;
     } catch (error) {
-      console.error('❌ getTaskSessions failed:', error.message);
+      console.error(' getTaskSessions failed:', error.message);
       throw error;
     }
   }
@@ -346,10 +346,10 @@ export const sessionApi = {
 
 // Enhanced helper functions
 export const generateUserDataFromTasks = (tasks, userId, userName) => {
-  console.log(`📊 Generating user data from ${tasks?.length || 0} tasks`);
+  console.log(` Generating user data from ${tasks?.length || 0} tasks`);
   
   if (!tasks || !Array.isArray(tasks)) {
-    console.warn('⚠️ Invalid tasks data, using empty array');
+    console.warn(' Invalid tasks data, using empty array');
     tasks = [];
   }
   
@@ -416,7 +416,7 @@ export const generateUserDataFromTasks = (tasks, userId, userName) => {
     }))
   };
   
-  console.log('📊 Generated user data:', {
+  console.log(' Generated user data:', {
     level: userData.level,
     xp: userData.xp,
     completed: userData.totalTasksCompleted,
@@ -691,6 +691,14 @@ export const taskUtils = {
     return diffDays;
   }
 };
+
+export const goalApi = {
+  createGoal: async (goal) => api.post('/goals', goal),
+  getGoals: async (params) => api.get('/goals', { params }),
+  updateGoal: async (id, updates) => api.put(`/goals/${id}`, updates),
+  deleteGoal: async (id) => api.delete(`/goals/${id}`)
+};
+
 
 // // lib/api.js
 // import axios from 'axios';

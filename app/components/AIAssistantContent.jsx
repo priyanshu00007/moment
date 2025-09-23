@@ -1,59 +1,103 @@
-"use client";
+'use client';
 import React, { useState, useRef, useEffect } from "react";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function AIAssistantChatbot() {
-  const [messages, setMessages] = useState([
-    { id: 1, role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }
-  ]);
+  const [messages, setMessages] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem("ai-assistant-messages");
+      return saved ? JSON.parse(saved) : [{ id: 1, role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }];
+    } catch {
+      return [{ id: 1, role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }];
+    }
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const API_KEY = "AIzaSyAMj190m7u1va-z76V0vfSu9jX0Xlo7RqY";
+  const API_KEY = "AIzaSyAMj190m7u1va-z76V0vfSu9jX0Xlo7RqY"; // Insert your Gemini API key here
   const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  async function sendMessage() {
-    if (!input.trim() || loading) return;
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ai-assistant-messages", JSON.stringify(messages));
+    }
+  }, [messages]);
 
-    const userMessage = { id: Date.now(), role: "user", text: input };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
+  const handleCopy = (text) => {
+    if (navigator.clipboard) navigator.clipboard.writeText(text);
+  };
+
+  const handleRegenerate = async () => {
+    if (loading) return;
+    const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+    if (!lastUserMsg) return;
     setLoading(true);
-
     try {
       const response = await fetch(`${API_URL}?key=${API_KEY}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [
-            ...messages.map((m) => ({
-              role: m.role === "user" ? "user" : "model",
-              parts: [{ text: m.text }]
-            })),
-            { role: "user", parts: [{ text: input }] }
+            ...messages.map(m => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.text }] })),
+            { role: "user", parts: [{ text: lastUserMsg.text }] }
           ]
-        })
+        }),
       });
-
       if (!response.ok) throw new Error("Gemini API Error");
       const data = await response.json();
-
       const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't generate a response.";
-      setMessages((prev) => [...prev, { id: Date.now() + 1, role: "bot", text: aiReply }]);
+      setMessages(prev => [...prev, { id: Date.now(), role: "bot", text: aiReply }]);
     } catch (err) {
       console.error("Gemini API Error:", err);
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now() + 2, role: "bot", text: "Sorry, something went wrong." }
-      ]);
+      setMessages(prev => [...prev, { id: Date.now(), role: "bot", text: "Sorry, something went wrong." }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  async function sendMessage() {
+    if (!input.trim() || loading) return;
+    const userMsg = { id: Date.now(), role: "user", text: input };
+    setMessages(prev => [...prev, userMsg]);
+    setInput("");
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            ...messages.map(m => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.text }] })),
+            { role: "user", parts: [{ text: input }] }
+          ]
+        }),
+      });
+      if (!response.ok) throw new Error("Gemini API Error");
+      const data = await response.json();
+      const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't generate a response.";
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: "bot", text: aiReply }]);
+    } catch (err) {
+      console.error("Gemini API Error:", err);
+      setMessages(prev => [...prev, { id: Date.now() + 2, role: "bot", text: "Sorry, something went wrong." }]);
     } finally {
       setLoading(false);
     }
   }
+
+  const TypingAnimation = () => (
+    <div className="flex justify-start">
+      <div className="px-5 py-3 bg-gray-300 text-gray-600 rounded-2xl rounded-bl-md shadow animate-pulse max-w-2xl">
+        AI is thinking<span className="inline-block">...</span>
+      </div>
+    </div>
+  );
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -67,52 +111,408 @@ export default function AIAssistantChatbot() {
       <header className="flex-none px-6 py-4 bg-indigo-700 text-white flex items-center gap-3 shadow">
         <span className="text-2xl font-bold">AI Assistant</span>
         <span className="ml-2 text-indigo-200 text-sm font-semibold">Powered by Gemini</span>
+        <button
+          className="ml-auto bg-indigo-800 hover:bg-indigo-900 px-3 py-1 rounded text-sm"
+          onClick={() => setMessages([{ id: Date.now(), role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }])}
+          disabled={loading}
+          title="Clear chat history"
+        >
+          Clear Chat
+        </button>
       </header>
+
       <section className="flex-1 flex flex-col max-w-3xl mx-auto w-full bg-white rounded-xl shadow-lg mt-8 mb-8 overflow-hidden border border-gray-200">
         <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4">
           {messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
-                className={`px-5 py-3 rounded-2xl max-w-2xl whitespace-pre-line text-base shadow
+                className={`px-5 py-3 rounded-2xl max-w-2xl whitespace-pre-line text-base shadow relative
                   ${msg.role === "user"
                     ? "bg-indigo-600 text-white rounded-br-md"
                     : "bg-gray-200 text-gray-900 rounded-bl-md"
                   }`}
               >
-                {msg.text}
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    strong: ({node, children}) => <>{children}</>,
+                    em: ({node, children}) => <>{children}</>,
+                  }}
+                >
+                  {msg.text}
+                </ReactMarkdown>
+                {msg.role === "bot" && (
+                  <div className="absolute top-1 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      aria-label="Copy reply"
+                      className="text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+                      onClick={() => navigator.clipboard.writeText(msg.text)}
+                    >
+                      Copy
+                    </button>
+                    <button
+                      aria-label="Regenerate reply"
+                      className="text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+                      onClick={handleRegenerate}
+                      disabled={loading}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="px-5 py-3 bg-gray-300 text-gray-600 rounded-2xl rounded-bl-md shadow animate-pulse max-w-2xl">
-                AI is thinking...
-              </div>
-            </div>
-          )}
+          {loading && <TypingAnimation />}
           <div ref={messagesEndRef} />
         </div>
-        <div className="border-t px-6 py-4 bg-white">
-          <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-3">
-            <textarea
-              rows={2}
-              className="flex-1 resize-none px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-base bg-gray-100"
-              placeholder="Type a message and press Enter…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={loading}
-            />
-            <button
-              type="submit"
-              className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
-              disabled={loading || input.trim() === ""}
-            >
-              {loading ? "Sending…" : "Send"}
-            </button>
-          </form>
-        </div>
+
+        <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="border-t px-6 py-4 bg-white flex gap-3">
+          <textarea
+            rows={2}
+            className="flex-1 resize-none px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-base bg-gray-100"
+            placeholder="Type a message and press Enter…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={loading}
+          />
+          <button
+            type="submit"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
+            disabled={loading || input.trim() === ""}
+          >
+            {loading ? "Sending…" : "Send"}
+          </button>
+        </form>
       </section>
     </div>
   );
 }
+
+// 'use client';
+// import React, { useState, useRef, useEffect } from "react";
+
+// export default function AIAssistantChatbot() {
+//   const [messages, setMessages] = useState(() => {
+//     if (typeof window === "undefined") return [];
+//     try {
+//       const saved = localStorage.getItem("ai-assistant-messages");
+//       if (saved) return JSON.parse(saved);
+//     } catch {}
+//     return [{ id: 1, role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }];
+//   });
+//   const [input, setInput] = useState("");
+//   const [loading, setLoading] = useState(false);
+//   const messagesEndRef = useRef(null);
+
+//   const API_KEY = "AIzaSyAMj190m7u1va-z76V0vfSu9jX0Xlo7RqY"; // Add your Gemini API key here
+//   const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+
+//   // Scroll to bottom on messages or loading state change
+//   useEffect(() => {
+//     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+//   }, [messages, loading]);
+
+//   // Save messages to localStorage on update
+//   useEffect(() => {
+//     if (typeof window !== "undefined") {
+//       localStorage.setItem("ai-assistant-messages", JSON.stringify(messages));
+//     }
+//   }, [messages]);
+
+//   // Copy bot message text to clipboard
+//   const handleCopy = (text) => {
+//     if (navigator.clipboard) navigator.clipboard.writeText(text);
+//   };
+
+//   // Resend last user message (retry AI response)
+//   const handleRegenerate = async () => {
+//     if (loading) return;
+//     // Find the last user message
+//     const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+//     if (!lastUserMsg) return;
+//     setLoading(true);
+
+//     try {
+//       const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({
+//           contents: [
+//             ...messages.map((m) => ({
+//               role: m.role === "user" ? "user" : "model",
+//               parts: [{ text: m.text }]
+//             })),
+//             { role: "user", parts: [{ text: lastUserMsg.text }] }
+//           ]
+//         }),
+//       });
+
+//       if (!response.ok) throw new Error("Gemini API Error");
+//       const data = await response.json();
+//       const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't generate a response.";
+//       setMessages((prev) => [...prev, { id: Date.now(), role: "bot", text: aiReply }]);
+//     } catch (err) {
+//       console.error("Gemini API Error:", err);
+//       setMessages((prev) => [...prev, { id: Date.now(), role: "bot", text: "Sorry, something went wrong." }]);
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
+
+//   // Send user message and get AI response
+//   async function sendMessage() {
+//     if (!input.trim() || loading) return;
+
+//     const userMessage = { id: Date.now(), role: "user", text: input };
+//     setMessages((prev) => [...prev, userMessage]);
+//     setInput("");
+//     setLoading(true);
+
+//     try {
+//       const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({
+//           contents: [
+//             ...messages.map((m) => ({
+//               role: m.role === "user" ? "user" : "model",
+//               parts: [{ text: m.text }]
+//             })),
+//             { role: "user", parts: [{ text: input }] }
+//           ]
+//         }),
+//       });
+
+//       if (!response.ok) throw new Error("Gemini API Error");
+//       const data = await response.json();
+
+//       const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't generate a response.";
+//       setMessages((prev) => [...prev, { id: Date.now() + 1, role: "bot", text: aiReply }]);
+//     } catch (err) {
+//       console.error("Gemini API Error:", err);
+//       setMessages((prev) => [...prev, { id: Date.now() + 2, role: "bot", text: "Sorry, something went wrong." }]);
+//     } finally {
+//       setLoading(false);
+//     }
+//   }
+
+//   // Typing animation for AI "thinking"
+//   const TypingAnimation = () => (
+//     <div className="flex justify-start">
+//       <div className="px-5 py-3 bg-gray-300 text-gray-600 rounded-2xl rounded-bl-md shadow animate-pulse max-w-2xl">
+//         AI is thinking<span className="inline-block">...</span>
+//       </div>
+//     </div>
+//   );
+
+//   const handleKeyDown = (e) => {
+//     if (e.key === "Enter" && !e.shiftKey) {
+//       e.preventDefault();
+//       sendMessage();
+//     }
+//   };
+
+//   return (
+//     <div className="h-screen flex flex-col bg-gradient-to-br from-indigo-100 via-white to-blue-100">
+//       <header className="flex-none px-6 py-4 bg-indigo-700 text-white flex items-center gap-3 shadow">
+//         <span className="text-2xl font-bold">AI Assistant</span>
+//         <span className="ml-2 text-indigo-200 text-sm font-semibold">Powered by Gemini</span>
+//         <button
+//           className="ml-auto bg-indigo-800 hover:bg-indigo-900 px-3 py-1 rounded text-sm"
+//           onClick={() => setMessages([{ id: Date.now(), role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }])}
+//           disabled={loading}
+//           title="Clear chat history"
+//         >
+//           Clear Chat
+//         </button>
+//       </header>
+
+//       <section className="flex-1 flex flex-col max-w-3xl mx-auto w-full bg-white rounded-xl shadow-lg mt-8 mb-8 overflow-hidden border border-gray-200">
+//         <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4">
+//           {messages.map((msg) => (
+//             <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+//               <div
+//                 className={`px-5 py-3 rounded-2xl max-w-2xl whitespace-pre-line text-base shadow relative
+//                   ${msg.role === "user"
+//                     ? "bg-indigo-600 text-white rounded-br-md"
+//                     : "bg-gray-200 text-gray-900 rounded-bl-md"
+//                   }`}
+//               >
+//                 {msg.text}
+//                 {msg.role === "bot" && (
+//                   <div className="absolute top-1 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+//                     <button
+//                       aria-label="Copy reply"
+//                       className="text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+//                       onClick={() => navigator.clipboard.writeText(msg.text)}
+//                     >
+//                       Copy
+//                     </button>
+//                     <button
+//                       aria-label="Regenerate reply"
+//                       className="text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+//                       onClick={handleRegenerate}
+//                       disabled={loading}
+//                     >
+//                       Retry
+//                     </button>
+//                   </div>
+//                 )}
+//               </div>
+//             </div>
+//           ))}
+//           {loading && <TypingAnimation />}
+//           <div ref={messagesEndRef} />
+//         </div>
+
+//         <div className="border-t px-6 py-4 bg-white">
+//           <form
+//             onSubmit={(e) => {
+//               e.preventDefault();
+//               sendMessage();
+//             }}
+//             className="flex gap-3"
+//           >
+//             <textarea
+//               rows={2}
+//               className="flex-1 resize-none px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-base bg-gray-100"
+//               placeholder="Type a message and press Enter…"
+//               value={input}
+//               onChange={(e) => setInput(e.target.value)}
+//               onKeyDown={handleKeyDown}
+//               disabled={loading}
+//             />
+//             <button
+//               type="submit"
+//               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
+//               disabled={loading || input.trim() === ""}
+//             >
+//               {loading ? "Sending…" : "Send"}
+//             </button>
+//           </form>
+//         </div>
+//       </section>
+//     </div>
+//   );
+// }
+
+// // "use client";
+// // import React, { useState, useRef, useEffect } from "react";
+
+// // export default function AIAssistantChatbot() {
+// //   const [messages, setMessages] = useState([
+// //     { id: 1, role: "bot", text: "Hi! I am your AI Assistant. How can I help you?" }
+// //   ]);
+// //   const [input, setInput] = useState("");
+// //   const [loading, setLoading] = useState(false);
+// //   const messagesEndRef = useRef(null);
+
+// //   const API_KEY = "";
+// //   const API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+
+// //   useEffect(() => {
+// //     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+// //   }, [messages, loading]);
+
+// //   async function sendMessage() {
+// //     if (!input.trim() || loading) return;
+
+// //     const userMessage = { id: Date.now(), role: "user", text: input };
+// //     setMessages((prev) => [...prev, userMessage]);
+// //     setInput("");
+// //     setLoading(true);
+
+// //     try {
+// //       const response = await fetch(`${API_URL}?key=${API_KEY}`, {
+// //         method: "POST",
+// //         headers: { "Content-Type": "application/json" },
+// //         body: JSON.stringify({
+// //           contents: [
+// //             ...messages.map((m) => ({
+// //               role: m.role === "user" ? "user" : "model",
+// //               parts: [{ text: m.text }]
+// //             })),
+// //             { role: "user", parts: [{ text: input }] }
+// //           ]
+// //         })
+// //       });
+
+// //       if (!response.ok) throw new Error("Gemini API Error");
+// //       const data = await response.json();
+
+// //       const aiReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't generate a response.";
+// //       setMessages((prev) => [...prev, { id: Date.now() + 1, role: "bot", text: aiReply }]);
+// //     } catch (err) {
+// //       console.error("Gemini API Error:", err);
+// //       setMessages((prev) => [
+// //         ...prev,
+// //         { id: Date.now() + 2, role: "bot", text: "Sorry, something went wrong." }
+// //       ]);
+// //     } finally {
+// //       setLoading(false);
+// //     }
+// //   }
+
+// //   const handleKeyDown = (e) => {
+// //     if (e.key === "Enter" && !e.shiftKey) {
+// //       e.preventDefault();
+// //       sendMessage();
+// //     }
+// //   };
+
+// //   return (
+// //     <div className="h-screen flex flex-col bg-gradient-to-br from-indigo-100 via-white to-blue-100">
+// //       <header className="flex-none px-6 py-4 bg-indigo-700 text-white flex items-center gap-3 shadow">
+// //         <span className="text-2xl font-bold">AI Assistant</span>
+// //         <span className="ml-2 text-indigo-200 text-sm font-semibold">Powered by Gemini</span>
+// //       </header>
+// //       <section className="flex-1 flex flex-col max-w-3xl mx-auto w-full bg-white rounded-xl shadow-lg mt-8 mb-8 overflow-hidden border border-gray-200">
+// //         <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4">
+// //           {messages.map((msg) => (
+// //             <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+// //               <div
+// //                 className={`px-5 py-3 rounded-2xl max-w-2xl whitespace-pre-line text-base shadow
+// //                   ${msg.role === "user"
+// //                     ? "bg-indigo-600 text-white rounded-br-md"
+// //                     : "bg-gray-200 text-gray-900 rounded-bl-md"
+// //                   }`}
+// //               >
+// //                 {msg.text}
+// //               </div>
+// //             </div>
+// //           ))}
+// //           {loading && (
+// //             <div className="flex justify-start">
+// //               <div className="px-5 py-3 bg-gray-300 text-gray-600 rounded-2xl rounded-bl-md shadow animate-pulse max-w-2xl">
+// //                 AI is thinking...
+// //               </div>
+// //             </div>
+// //           )}
+// //           <div ref={messagesEndRef} />
+// //         </div>
+// //         <div className="border-t px-6 py-4 bg-white">
+// //           <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-3">
+// //             <textarea
+// //               rows={2}
+// //               className="flex-1 resize-none px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-base bg-gray-100"
+// //               placeholder="Type a message and press Enter…"
+// //               value={input}
+// //               onChange={(e) => setInput(e.target.value)}
+// //               onKeyDown={handleKeyDown}
+// //               disabled={loading}
+// //             />
+// //             <button
+// //               type="submit"
+// //               className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
+// //               disabled={loading || input.trim() === ""}
+// //             >
+// //               {loading ? "Sending…" : "Send"}
+// //             </button>
+// //           </form>
+// //         </div>
+// //       </section>
+// //     </div>
+// //   );
+// // }

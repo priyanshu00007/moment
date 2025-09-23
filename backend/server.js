@@ -205,6 +205,48 @@ app.get('/api/v1/sessions', async (req, res) => {
   }
 });
 
+// goal tracker 
+const { Goal } = require('./models');
+
+app.post('/api/v1/goals', async (req, res) => {
+  try {
+    const goal = new Goal(req.body);
+    await goal.save();
+    res.status(201).json({ success: true, data: goal });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/v1/goals', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    const goals = await Goal.find({ userId });
+    res.json({ success: true, data: goals });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/v1/goals/:id', async (req, res) => {
+  try {
+    const updated = await Goal.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/v1/goals/:id', async (req, res) => {
+  try {
+    await Goal.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+
 // ========== Global Error & 404 ==========
 app.use((err, req, res, next) => {
   console.error('🚨 Global error:', err);
